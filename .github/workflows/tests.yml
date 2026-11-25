@@ -107,8 +107,11 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          go-apidiff "$BASE_SHA" "$HEAD_SHA" | tee api-diff.txt
+          status=0
+          go-apidiff "$BASE_SHA" "$HEAD_SHA" > api-diff.txt 2>&1 || status=$?
+          cat api-diff.txt
           cat api-diff.txt >> "$GITHUB_STEP_SUMMARY"
+          if (( status != 0 )); then exit "$status"; fi
           if grep -q 'Incompatible changes:' api-diff.txt; then
             echo "::error::Public API incompatibility detected"
             exit 1
