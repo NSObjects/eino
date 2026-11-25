@@ -108,12 +108,27 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          # Compare tracked source snapshots in a clean repository. The historical
+          # examples/ext gitlinks have no .gitmodules entries and go-git treats
+          # them as deleted, even in a fresh checkout.
+          source_repo="$PWD"
+          compare_repo=$(mktemp -d)
+          report=$(mktemp)
+          trap 'rm -rf "$compare_repo" "$report"' EXIT
+          git -C "$compare_repo" init -q
+          git -C "$compare_repo" config user.name 'API compatibility CI'
+          git -C "$compare_repo" config user.email 'ci@example.invalid'
+          snapshot() {
+            git -C "$source_repo" archive "$1" | tar -xf - -C "$compare_repo"
+            git -C "$compare_repo" add -f .
+            git -C "$compare_repo" commit --allow-empty -qm "Snapshot $1"
+            git -C "$compare_repo" rev-parse HEAD
+          }
+          old_commit=$(snapshot "$BASE_SHA")
+          git -C "$compare_repo" rm -qr -- .
+          new_commit=$(snapshot "$HEAD_SHA")
           status=0
-          go-apidiff "$BASE_SHA" "$HEAD_SHA" > api-diff.txt 2>&1 || status=$?
-          cat api-diff.txt
-          cat api-diff.txt >> "$GITHUB_STEP_SUMMARY"
-          if (( status != 0 )); then exit "$status"; fi
-          if grep -q 'Incompatible changes:' api-diff.txt; then
-            echo "::error::Public API incompatibility detected"
-            exit 1
-          fi
+          (cd "$compare_repo" && go-apidiff "$old_commit" "$new_commit") > "$report" 2>&1 || status=$?
+          cat "$report"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
