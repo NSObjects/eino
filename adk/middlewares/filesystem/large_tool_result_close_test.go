@@ -17,10 +17,12 @@
 package filesystem
 
 import (
+	"context"
 	"errors"
 	"io"
 	"testing"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -67,6 +69,58 @@ func TestConcatStringClosesSource(t *testing.T) {
 
 			if !writer.Send("unconsumed", nil) {
 				t.Error("concatString did not close its source stream")
+			}
+		})
+	}
+}
+
+
+// Exercise the middleware ownership boundary with a normal, non-automatic
+// reader. Its Close is not idempotent, so this also detects a double close.
+func TestToolResultOffloadingClosesConsumedSource(t *testing.T) {
+	ctx := context.Background()
+	wantErr := errors.New("source failure")
+	for _, tc := range []struct {
+		name     string
+		terminal error
+	}{
+		{name: "EOF", terminal: io.EOF},
+		{name: "error", terminal: wantErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, writer := schema.Pipe[string](3)
+			defer writer.Close()
+			writer.Send("first", nil)
+			writer.Send("", tc.terminal)
+
+			middleware := newToolResultOffloading(ctx, &toolResultOffloadingConfig{
+				Backend:    newMockBackend(),
+				TokenLimit: 1000,
+			})
+			wrapped := middleware.Streamable(func(context.Context, *compose.ToolInput) (*compose.StreamToolOutput, error) {
+				return &compose.StreamToolOutput{Result: source}, nil
+			})
+			out, err := wrapped(ctx, &compose.ToolInput{Name: "test_tool", CallID: "call"})
+			if !writer.Send("unconsumed", nil) {
+				source.Close()
+				t.Fatal("middleware did not close its consumed source")
+			}
+			if tc.terminal != io.EOF {
+				if !errors.Is(err, wantErr) || out != nil {
+					t.Fatalf("expected terminal error without replacement stream, got %v, %v", out, err)
+				}
+				return
+			}
+			if err != nil || out == nil || out.Result == nil {
+				t.Fatalf("expected replacement stream, got %v, %v", out, err)
+			}
+			defer out.Result.Close()
+			chunk, err := out.Result.Recv()
+			if err != nil || chunk != "first" {
+				t.Fatalf("replacement chunk = %q, %v", chunk, err)
+			}
+			if _, err := out.Result.Recv(); !errors.Is(err, io.EOF) {
+				t.Fatalf("expected replacement EOF, got %v", err)
 			}
 		})
 	}
