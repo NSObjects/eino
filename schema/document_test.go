@@ -85,3 +85,53 @@ func TestDocumentTypedMetadataAfterJSONRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestDocumentMetadataAccessorsMalformedAndEmpty(t *testing.T) {
+	t.Run("nil metadata", func(t *testing.T) {
+		d := &Document{}
+		require.Nil(t, d.SubIndexes())
+		require.Nil(t, d.DenseVector())
+		require.Nil(t, d.SparseVector())
+	})
+	t.Run("malformed values are not partially accepted", func(t *testing.T) {
+		d := &Document{MetaData: map[string]any{
+			docMetaDataKeySubIndexes: []any{"valid", 1},
+			docMetaDataKeyDenseVector: []any{float64(1), "invalid"},
+			docMetaDataKeySparseVector: map[string]any{"1": float64(2), "bad": float64(3)},
+		}}
+		require.Nil(t, d.SubIndexes())
+		require.Nil(t, d.DenseVector())
+		require.Nil(t, d.SparseVector())
+	})
+	t.Run("noncanonical sparse indexes cannot collide", func(t *testing.T) {
+		for _, key := range []string{"01", "+1", "-0", "999999999999999999999999"} {
+			d := &Document{MetaData: map[string]any{
+				docMetaDataKeySparseVector: map[string]any{"1": float64(2), key: float64(3)},
+			}}
+			require.Nil(t, d.SparseVector(), "key: %s", key)
+		}
+		d := &Document{MetaData: map[string]any{
+			docMetaDataKeySparseVector: map[string]any{"1": "invalid"},
+		}}
+		require.Nil(t, d.SparseVector())
+	})
+	t.Run("empty typed collections survive JSON round trip", func(t *testing.T) {
+		d := (&Document{}).WithSubIndexes([]string{}).WithDenseVector([]float64{}).WithSparseVector(map[int]float64{})
+		data, err := json.Marshal(d)
+		require.NoError(t, err)
+		var decoded Document
+		require.NoError(t, json.Unmarshal(data, &decoded))
+		require.Equal(t, []string{}, decoded.SubIndexes())
+		require.Equal(t, []float64{}, decoded.DenseVector())
+		require.Equal(t, map[int]float64{}, decoded.SparseVector())
+	})
+	t.Run("typed metadata remains compatible", func(t *testing.T) {
+		indexes := []string{"a"}
+		dense := []float64{1}
+		sparse := map[int]float64{2: 3}
+		d := (&Document{}).WithSubIndexes(indexes).WithDenseVector(dense).WithSparseVector(sparse)
+		require.Equal(t, indexes, d.SubIndexes())
+		require.Equal(t, dense, d.DenseVector())
+		require.Equal(t, sparse, d.SparseVector())
+	})
+}
