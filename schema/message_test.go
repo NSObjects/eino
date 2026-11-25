@@ -2376,3 +2376,52 @@ func TestConvToolOutputPartToMessageInputPart(t *testing.T) {
 		assert.ErrorContains(t, err, "unknown tool part type")
 	})
 }
+
+func TestConcatUserMultiContentExtraBoundaries(t *testing.T) {
+	textPart := func(text string, extra map[string]any) MessageInputPart {
+		return MessageInputPart{Type: ChatMessagePartTypeText, Text: text, Extra: extra}
+	}
+	t.Run("merge repeated keys and preserve media boundary", func(t *testing.T) {
+		first := map[string]any{"delta": "a", "optional": nil}
+		second := map[string]any{"delta": "b", "optional": "value"}
+		image := MessageInputPart{Type: ChatMessagePartTypeImageURL, Image: &MessageInputImage{}}
+		parts := []MessageInputPart{textPart("one", first), textPart("two", second), image, textPart("three", nil)}
+		got, err := concatUserMultiContent(parts)
+		assert.NoError(t, err)
+		if !assert.Len(t, got, 3) {
+			return
+		}
+		assert.Equal(t, "onetwo", got[0].Text)
+		assert.Equal(t, map[string]any{"delta": "ab", "optional": "value"}, got[0].Extra)
+		assert.Equal(t, image, got[1])
+		assert.Equal(t, parts[3], got[2])
+		assert.Equal(t, "a", first["delta"])
+		assert.Nil(t, first["optional"])
+		assert.Equal(t, "b", second["delta"])
+	})
+	t.Run("one metadata map is copied", func(t *testing.T) {
+		extra := map[string]any{"source": "original"}
+		got, err := concatUserMultiContent([]MessageInputPart{textPart("a", extra), textPart("b", nil)})
+		assert.NoError(t, err)
+		if !assert.Len(t, got, 1) {
+			return
+		}
+		got[0].Extra["source"] = "changed"
+		assert.Equal(t, "original", extra["source"])
+	})
+	t.Run("no metadata stays nil", func(t *testing.T) {
+		got, err := concatUserMultiContent([]MessageInputPart{textPart("a", nil), textPart("b", map[string]any{})})
+		assert.NoError(t, err)
+		if assert.Len(t, got, 1) {
+			assert.Nil(t, got[0].Extra)
+		}
+	})
+	t.Run("incompatible types propagate an error", func(t *testing.T) {
+		got, err := concatUserMultiContent([]MessageInputPart{
+			textPart("a", map[string]any{"key": "value"}),
+			textPart("b", map[string]any{"key": 1}),
+		})
+		assert.Error(t, err)
+		assert.Nil(t, got)
+	})
+}
