@@ -113,3 +113,23 @@ func TestRRFEmptyResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
+
+func TestRouterDefaultSelectionAndFusionDeterministic(t *testing.T) {
+	ctx := context.Background()
+	keyword := &schema.Document{ID: "shared", Content: "keyword"}
+	vector := &schema.Document{ID: "shared", Content: "vector"}
+	a, b := &schema.Document{ID: "a"}, &schema.Document{ID: "b"}
+	r, err := NewRetriever(ctx, &Config{
+		Retrievers: map[string]retriever.Retriever{
+			"keyword": &fixedRRFTestRetriever{docs: []*schema.Document{keyword, b, a}},
+			"vector":  &fixedRRFTestRetriever{docs: []*schema.Document{vector, a, b}},
+		},
+	})
+	require.NoError(t, err)
+	for i := 0; i < 50; i++ {
+		got, err := r.Retrieve(ctx, "same query")
+		require.NoError(t, err)
+		require.Equal(t, []*schema.Document{keyword, a, b}, got)
+		require.Same(t, keyword, got[0])
+	}
+}
