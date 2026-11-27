@@ -70,6 +70,12 @@ func NewRetriever(ctx context.Context, config *Config) (retriever.Retriever, err
 	var err error
 
 	// config validate
+	if config == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	if config.MaxQueriesNum < 0 {
+		return nil, fmt.Errorf("MaxQueriesNum must not be negative")
+	}
 	if config.OrigRetriever == nil {
 		return nil, fmt.Errorf("OrigRetriever is required")
 	}
@@ -140,7 +146,8 @@ type Config struct {
 	LLMOutputParser func(context.Context, *schema.Message) ([]string, error)
 	// 2. set RewriteHandler to provide custom query generation logic, possibly without a ChatModel. If this field is set, it takes precedence over other configurations above
 	RewriteHandler func(ctx context.Context, query string) ([]string, error)
-	// limit max queries num that Rewrite generates, and excess queries will be truncated, 5 by default
+	// MaxQueriesNum limits the number of rewritten queries. Excess queries are
+	// truncated. Zero uses the default of 5; negative values are invalid.
 	MaxQueriesNum int
 
 	// Origin Retriever
